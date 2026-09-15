@@ -2,6 +2,7 @@ import asyncio
 import io
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -13,7 +14,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.16.1"
+APP_VERSION = "2026.09.16.2"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -54,6 +55,31 @@ def hopin_job_url(job: dict) -> str:
     company = hopin_slug(job.get("company", ""))
     parts = [p for p in (title, company, jid) if p]
     return "https://hopinjobs.com/jobs/" + "-".join(parts)
+
+
+def extract_application_url(text: str) -> str:
+    """Find a real application URL embedded in a job description.
+
+    Prefer explicit application links and ignore common social/WhatsApp links.
+    """
+    urls = re.findall(r"https?://[^\s<>\"']+", text or "")
+    cleaned = [u.rstrip(".,);]}") for u in urls]
+    blocked_hosts = {"wa.me", "whatsapp.com", "www.whatsapp.com", "linkedin.com", "www.linkedin.com", "x.com", "twitter.com"}
+    candidates = []
+    for url in cleaned:
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            continue
+        if not host or host in blocked_hosts or host.endswith(".linkedin.com") or host.endswith(".whatsapp.com"):
+            continue
+        candidates.append(url)
+    # Strong signals that the URL is an application destination.
+    for url in candidates:
+        low = url.lower()
+        if any(token in low for token in ("apply", "career", "careers", "jobs", "job", "workday", "greenhouse", "lever", "smartrecruiters", "myworkdayjobs")):
+            return url
+    return candidates[0] if candidates else ""
 
 
 @app.get("/")
@@ -131,11 +157,18 @@ async def fetch_hopin(client: httpx.AsyncClient):
             jid = j.get("id")
             if not jid:
                 continue
+            description = j.get("description", "")
+            application_url = extract_application_url(description)
+            # Hidden/unofficial Hopin roles do not always have a public job page.
+            # Prefer an application URL embedded in the listing; otherwise fall back
+            # to the public Hopin listing URL.
+            url = application_url or hopin_job_url(j)
             jobs.append({
                 "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
                 "title": j.get("title", ""), "location": j.get("location", ""), "work_model": j.get("work_type", ""),
-                "posting_date": j.get("posted_at", ""), "url": hopin_job_url(j),
-                "description": j.get("description", ""),
+                "posting_date": j.get("posted_at", ""), "url": url,
+                "application_url": application_url,
+                "description": description,
                 "remote": "remote" in j.get("work_type", "").lower() or "remote" in j.get("location", "").lower(),
                 "salary": j.get("ctc_amount", ""),
             })
