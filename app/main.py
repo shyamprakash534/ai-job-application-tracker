@@ -13,7 +13,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.15.3"
+APP_VERSION = "2026.09.16.1"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -38,6 +38,22 @@ def extract_resume(filename: str, data: bytes) -> str:
     if name.endswith(".docx"):
         return extract_docx(data)
     raise HTTPException(400, "Please upload a PDF or DOCX resume.")
+
+
+def hopin_slug(value: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", (value or "").lower())
+    return value.strip("-")
+
+
+def hopin_job_url(job: dict) -> str:
+    """Build the public Hopin listing URL format used by hopinjobs.com."""
+    jid = str(job.get("id") or "").strip()
+    if not jid:
+        return ""
+    title = hopin_slug(job.get("title", ""))
+    company = hopin_slug(job.get("company", ""))
+    parts = [p for p in (title, company, jid) if p]
+    return "https://hopinjobs.com/jobs/" + "-".join(parts)
 
 
 @app.get("/")
@@ -118,7 +134,7 @@ async def fetch_hopin(client: httpx.AsyncClient):
             jobs.append({
                 "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
                 "title": j.get("title", ""), "location": j.get("location", ""), "work_model": j.get("work_type", ""),
-                "posting_date": j.get("posted_at", ""), "url": f"https://www.hopinjobs.com/jobs/{jid}",
+                "posting_date": j.get("posted_at", ""), "url": hopin_job_url(j),
                 "description": j.get("description", ""),
                 "remote": "remote" in j.get("work_type", "").lower() or "remote" in j.get("location", "").lower(),
                 "salary": j.get("ctc_amount", ""),
