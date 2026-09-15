@@ -14,7 +14,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.16.2"
+APP_VERSION = "2026.09.16.3"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -47,7 +47,7 @@ def hopin_slug(value: str) -> str:
 
 
 def hopin_job_url(job: dict) -> str:
-    """Build the public Hopin listing URL format used by hopinjobs.com."""
+    """Build the public Hopin job-page URL."""
     jid = str(job.get("id") or "").strip()
     if not jid:
         return ""
@@ -58,13 +58,13 @@ def hopin_job_url(job: dict) -> str:
 
 
 def extract_application_url(text: str) -> str:
-    """Find a real application URL embedded in a job description.
-
-    Prefer explicit application links and ignore common social/WhatsApp links.
-    """
+    """Find a genuine application URL embedded in a job description."""
     urls = re.findall(r"https?://[^\s<>\"']+", text or "")
     cleaned = [u.rstrip(".,);]}") for u in urls]
-    blocked_hosts = {"wa.me", "whatsapp.com", "www.whatsapp.com", "linkedin.com", "www.linkedin.com", "x.com", "twitter.com"}
+    blocked_hosts = {
+        "wa.me", "whatsapp.com", "www.whatsapp.com",
+        "linkedin.com", "www.linkedin.com", "x.com", "twitter.com",
+    }
     candidates = []
     for url in cleaned:
         try:
@@ -74,12 +74,27 @@ def extract_application_url(text: str) -> str:
         if not host or host in blocked_hosts or host.endswith(".linkedin.com") or host.endswith(".whatsapp.com"):
             continue
         candidates.append(url)
-    # Strong signals that the URL is an application destination.
     for url in candidates:
         low = url.lower()
-        if any(token in low for token in ("apply", "career", "careers", "jobs", "job", "workday", "greenhouse", "lever", "smartrecruiters", "myworkdayjobs")):
+        if any(token in low for token in (
+            "apply", "career", "careers", "jobs", "job", "workday",
+            "greenhouse", "lever", "smartrecruiters", "myworkdayjobs"
+        )):
             return url
     return candidates[0] if candidates else ""
+
+
+def source_job_url(job: dict) -> str:
+    """Return the official page supplied by the job source, not a direct-apply URL."""
+    if job.get("source") == "Jobicy":
+        return str(job.get("url") or "")
+    if job.get("source") == "Hopin":
+        return hopin_job_url({
+            "id": str(job.get("source_job_id") or "").replace("hopin-", ""),
+            "title": job.get("title", ""),
+            "company": job.get("company", ""),
+        })
+    return str(job.get("url") or "")
 
 
 @app.get("/")
@@ -136,10 +151,11 @@ async def fetch_jobicy(client: httpx.AsyncClient, skills: list[str]):
                 jid = j.get("id")
                 if jid is None:
                     continue
+                source_url = j.get("url", "")
                 jobs_by_id[f"jobicy-{jid}"] = {
                     "id": f"jobicy-{jid}", "source": "Jobicy", "company": j.get("companyName", ""),
                     "title": j.get("jobTitle", ""), "location": j.get("jobGeo", "Remote"), "work_model": "Remote",
-                    "posting_date": j.get("pubDate", ""), "url": j.get("url", ""),
+                    "posting_date": j.get("pubDate", ""), "url": source_url, "source_url": source_url,
                     "description": re.sub(r"<[^>]+>", " ", j.get("jobDescription", "")), "remote": True,
                     "salary": f"{j.get('salaryMin','')} - {j.get('salaryMax','')} {j.get('salaryCurrency','')}".strip(" -"),
                 }
@@ -159,15 +175,12 @@ async def fetch_hopin(client: httpx.AsyncClient):
                 continue
             description = j.get("description", "")
             application_url = extract_application_url(description)
-            # Hidden/unofficial Hopin roles do not always have a public job page.
-            # Prefer an application URL embedded in the listing; otherwise fall back
-            # to the public Hopin listing URL.
-            url = application_url or hopin_job_url(j)
+            source_url = hopin_job_url(j)
             jobs.append({
                 "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
                 "title": j.get("title", ""), "location": j.get("location", ""), "work_model": j.get("work_type", ""),
-                "posting_date": j.get("posted_at", ""), "url": url,
-                "application_url": application_url,
+                "posting_date": j.get("posted_at", ""), "url": source_url, "source_url": source_url,
+                "application_url": application_url, "source_job_id": str(jid),
                 "description": description,
                 "remote": "remote" in j.get("work_type", "").lower() or "remote" in j.get("location", "").lower(),
                 "salary": j.get("ctc_amount", ""),
@@ -199,6 +212,7 @@ async def match_jobs(req: SearchRequest):
                 continue
         result = match_job(job, req.resume_text, req.skills, req.locations)
         job["match"] = result
+        job["source_url"] = source_job_url(job)
         results.append(job)
 
     results.sort(key=lambda x: (x["match"]["score"], x.get("posting_date", "")), reverse=True)
