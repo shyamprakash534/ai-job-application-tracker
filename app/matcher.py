@@ -27,9 +27,11 @@ def extract_skills(text: str, extra_skills=None) -> list[str]:
 def location_score(job_location: str, preferred_locations: list[str], remote=False):
     if not preferred_locations: return 70, False
     text = normalize(job_location)
+    aliases = {"bengaluru": ["bengaluru", "bangalore"], "bangalore": ["bengaluru", "bangalore"]}
     for loc in preferred_locations:
         loc = normalize(loc)
-        if loc and (loc in text or text in loc): return 100, True
+        candidates = aliases.get(loc, [loc])
+        if any(x and (x in text or text in x) for x in candidates): return 100, True
     if remote and any(x in normalize(" ".join(preferred_locations)) for x in ["remote", "anywhere", "worldwide"]): return 100, True
     return 0, False
 
@@ -50,4 +52,4 @@ def match_job(job: dict, resume_text: str, user_skills: list[str], preferred_loc
     loc_score, loc_match = location_score(job.get("location", ""), preferred_locations, bool(job.get("remote")))
     score = round(resume_score * .30 + skill_score * .35 + loc_score * .20 + exp_score * .10 + title_score * .05)
     if preferred_locations and not loc_match: score = min(score, 59)
-    return {"score": score, "matched_skills": matched, "missing_skills": missing[:12], "location_match": loc_match, "location_score": loc_score, "experience_score": exp_score, "hard_stops": hard_stops}
+    return {"score": score, "required_skills": job_skills, "matched_skills": matched, "missing_skills": missing[:12], "location_match": loc_match, "location_score": loc_score, "experience_score": exp_score, "hard_stops": hard_stops}
