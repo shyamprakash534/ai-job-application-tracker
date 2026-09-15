@@ -13,7 +13,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.15.2"
+APP_VERSION = "2026.09.15.3"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -77,14 +77,10 @@ async def parse_resume(file: UploadFile = File(...)):
 
 async def fetch_jobicy(client: httpx.AsyncClient, skills: list[str]):
     try:
-        # Jobicy supports up to 200 current remote listings and keyword tags.
         tags = [s for s in skills if s.strip()][:4] or ["software"]
         batches = await asyncio.gather(*[
-            client.get(
-                "https://jobicy.com/api/v2/remote-jobs",
-                params={"count": 200, "tag": tag},
-                timeout=15,
-            ) for tag in tags
+            client.get("https://jobicy.com/api/v2/remote-jobs", params={"count": 200, "tag": tag}, timeout=15)
+            for tag in tags
         ], return_exceptions=True)
         jobs_by_id = {}
         for response in batches:
@@ -99,16 +95,10 @@ async def fetch_jobicy(client: httpx.AsyncClient, skills: list[str]):
                 if jid is None:
                     continue
                 jobs_by_id[f"jobicy-{jid}"] = {
-                    "id": f"jobicy-{jid}",
-                    "source": "Jobicy",
-                    "company": j.get("companyName", ""),
-                    "title": j.get("jobTitle", ""),
-                    "location": j.get("jobGeo", "Remote"),
-                    "work_model": "Remote",
-                    "posting_date": j.get("pubDate", ""),
-                    "url": j.get("url", ""),
-                    "description": re.sub(r"<[^>]+>", " ", j.get("jobDescription", "")),
-                    "remote": True,
+                    "id": f"jobicy-{jid}", "source": "Jobicy", "company": j.get("companyName", ""),
+                    "title": j.get("jobTitle", ""), "location": j.get("jobGeo", "Remote"), "work_model": "Remote",
+                    "posting_date": j.get("pubDate", ""), "url": j.get("url", ""),
+                    "description": re.sub(r"<[^>]+>", " ", j.get("jobDescription", "")), "remote": True,
                     "salary": f"{j.get('salaryMin','')} - {j.get('salaryMax','')} {j.get('salaryCurrency','')}".strip(" -"),
                 }
         return list(jobs_by_id.values())
@@ -118,11 +108,7 @@ async def fetch_jobicy(client: httpx.AsyncClient, skills: list[str]):
 
 async def fetch_hopin(client: httpx.AsyncClient):
     try:
-        r = await client.get(
-            "https://api.hopinjobs.com/api/jobs",
-            params={"is_unofficial": "true"},
-            timeout=15,
-        )
+        r = await client.get("https://api.hopinjobs.com/api/jobs", params={"is_unofficial": "true"}, timeout=15)
         r.raise_for_status()
         jobs = []
         for j in r.json().get("jobs", []):
@@ -130,14 +116,9 @@ async def fetch_hopin(client: httpx.AsyncClient):
             if not jid:
                 continue
             jobs.append({
-                "id": f"hopin-{jid}",
-                "source": "Hopin",
-                "company": j.get("company", ""),
-                "title": j.get("title", ""),
-                "location": j.get("location", ""),
-                "work_model": j.get("work_type", ""),
-                "posting_date": j.get("posted_at", ""),
-                "url": f"https://www.hopinjobs.com/jobs/{jid}",
+                "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
+                "title": j.get("title", ""), "location": j.get("location", ""), "work_model": j.get("work_type", ""),
+                "posting_date": j.get("posted_at", ""), "url": f"https://www.hopinjobs.com/jobs/{jid}",
                 "description": j.get("description", ""),
                 "remote": "remote" in j.get("work_type", "").lower() or "remote" in j.get("location", "").lower(),
                 "salary": j.get("ctc_amount", ""),
@@ -153,10 +134,7 @@ async def match_jobs(req: SearchRequest):
         raise HTTPException(400, "Upload a resume or add at least one skill.")
 
     async with httpx.AsyncClient(headers={"User-Agent": "AI-Job-Matcher/1.0"}) as client:
-        remote_jobs, india_jobs = await asyncio.gather(
-            fetch_jobicy(client, req.skills),
-            fetch_hopin(client),
-        )
+        remote_jobs, india_jobs = await asyncio.gather(fetch_jobicy(client, req.skills), fetch_hopin(client))
 
     jobs = {j["id"]: j for j in remote_jobs + india_jobs}.values()
     results = []
@@ -166,9 +144,9 @@ async def match_jobs(req: SearchRequest):
         title = job.get("title", "")
         if req.roles and not any(r.strip().lower() in title.lower() for r in req.roles if r.strip()):
             continue
-        if requested_modes and job.get("work_model"):
-            job_mode = job["work_model"].lower()
-            if not any(mode in job_mode for mode in requested_modes):
+        if requested_modes:
+            job_mode = (job.get("work_model") or "").lower()
+            if job_mode and not any(mode in job_mode for mode in requested_modes):
                 continue
         result = match_job(job, req.resume_text, req.skills, req.locations)
         job["match"] = result
@@ -176,12 +154,8 @@ async def match_jobs(req: SearchRequest):
 
     results.sort(key=lambda x: (x["match"]["score"], x.get("posting_date", "")), reverse=True)
     return {
-        "count": len(results),
-        "jobs": results[:100],
+        "count": len(results), "jobs": results[:100],
         "profile_skills": extract_skills(req.resume_text, req.skills),
-        "source_counts": {
-            "Jobicy": sum(1 for j in results if j.get("source") == "Jobicy"),
-            "Hopin": sum(1 for j in results if j.get("source") == "Hopin"),
-        },
+        "source_counts": {"Jobicy": sum(1 for j in results if j.get("source") == "Jobicy"), "Hopin": sum(1 for j in results if j.get("source") == "Hopin")},
         "version": APP_VERSION,
     }
