@@ -1,56 +1,56 @@
-# AI Job Application Tracker + Smart Matcher
+# JobMatch AI
 
-A FastAPI + SQLite MVP for tracking job applications and matching each job independently against four role-specific resume profiles.
+Public job-matching website: upload a resume, add skills, choose preferred locations, and get ranked jobs that match the profile.
 
-## Four resume profiles
-1. Data Analyst
-2. AWS Cloud / Data Engineer
-3. Backend / Platform Generalist
-4. AI/ML / GenAI
+## User flow
+1. Upload PDF/DOCX resume.
+2. Add extra skills.
+3. Enter preferred locations such as Hyderabad, Bengaluru, Chennai or Remote.
+4. Optionally choose job roles and work models.
+5. Click **Find Matching Jobs**.
+6. The backend discovers jobs and ranks them by resume relevance, skills, location and eligibility.
+
+## Current job sources
+- **Jobicy** public remote-jobs API for remote listings. The integration keeps the original Jobicy URL/source attribution.
+- **Hopin Jobs** public read-only API for India job listings.
+
+These sources are intentionally used server-side so the browser never needs third-party API credentials.
+
+## Matching model
+- Resume relevance: 30%
+- Skills: 35%
+- Preferred location: 20%
+- Experience eligibility: 10%
+- Role/title relevance: 5%
+
+If a user explicitly chooses locations and a job does not match them, the score is capped so an unrelated location cannot outrank a preferred location.
 
 ## Stack
 - Python
 - FastAPI
-- SQLite
+- httpx
+- pypdf + python-docx for resume extraction
 - Vanilla HTML/CSS/JavaScript
 
 ## Run locally
 ```bash
 python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open http://127.0.0.1:8000
-
-## Features
-- Job application tracking and status workflow
-- Search and status/resume filters
-- Four independent resume match scores
-- Best-resume recommendation
-- Skill, title, project and experience signals
-- Experience hard-stop flags
-- Application URL support
-- Responsive JobOS dashboard
-
-## Matching model
-The initial deterministic matcher scores:
-- skills: 35%
-- title/role: 20%
-- experience eligibility: 15%
-- location/work model: 10%
-- project relevance: 10%
-- education: 5%
-- other requirements: 5%
-
-Hard-stop requirements are reported separately so a high keyword score cannot hide a genuine eligibility problem.
+Open `http://127.0.0.1:8000`.
 
 ## Deployment
-Designed for deployment as a Python web service on Render using:
-
+Render build command:
 ```text
-Build: pip install -r requirements.txt
-Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+pip install -r requirements.txt
 ```
+
+Render start command:
+```text
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+## Important
+Job availability depends on the connected public job sources. The application does not claim to contain every job on the internet. It ranks the listings returned by its configured sources.
