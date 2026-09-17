@@ -14,7 +14,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.17.1"
+APP_VERSION = "2026.09.17.2"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -57,7 +57,7 @@ def hopin_job_url(job: dict) -> str:
 
 
 def extract_application_url(text: str) -> str:
-    """Find a genuine employer/ATS application or careers URL in a listing."""
+    """Find a genuine employer/ATS application or careers URL in listing text."""
     urls = re.findall(r"https?://[^\s<>\"']+", text or "")
     cleaned = [u.rstrip(".,);]}") for u in urls]
     blocked_hosts = {
@@ -85,8 +85,30 @@ def extract_application_url(text: str) -> str:
     return candidates[0] if candidates else ""
 
 
+def extract_application_url_from_job(job: dict) -> str:
+    """Search all Hopin job fields for an employer/ATS URL, not just description."""
+    preferred_keys = (
+        "application_url", "apply_url", "applyUrl", "applicationUrl",
+        "careers_url", "careersUrl", "career_url", "careerUrl",
+        "company_url", "companyUrl", "company_website", "companyWebsite",
+        "website", "job_url", "jobUrl", "redirect_url", "redirectUrl",
+    )
+    values = []
+    for key in preferred_keys:
+        value = job.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value)
+    for key, value in job.items():
+        if key in preferred_keys or key in {"description", "id", "title", "company"}:
+            continue
+        if isinstance(value, str) and "http" in value.lower():
+            values.append(value)
+    values.append(job.get("description", ""))
+    return extract_application_url("\n".join(values))
+
+
 def source_job_url(job: dict) -> str:
-    """Prefer the employer/ATS application URL; never send the user to Hopin when one exists."""
+    """Use the employer/ATS application URL; never route Hopin listings to Hopin."""
     application_url = str(job.get("application_url") or "").strip()
     if application_url:
         return application_url
@@ -175,7 +197,7 @@ async def fetch_hopin(client: httpx.AsyncClient):
             if not jid:
                 continue
             description = j.get("description", "")
-            application_url = extract_application_url(description)
+            application_url = extract_application_url_from_job(j)
             source_url = hopin_job_url(j)
             jobs.append({
                 "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
