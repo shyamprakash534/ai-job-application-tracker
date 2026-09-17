@@ -14,7 +14,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.16.3"
+APP_VERSION = "2026.09.17.1"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -47,7 +47,6 @@ def hopin_slug(value: str) -> str:
 
 
 def hopin_job_url(job: dict) -> str:
-    """Build the public Hopin job-page URL."""
     jid = str(job.get("id") or "").strip()
     if not jid:
         return ""
@@ -58,12 +57,13 @@ def hopin_job_url(job: dict) -> str:
 
 
 def extract_application_url(text: str) -> str:
-    """Find a genuine application URL embedded in a job description."""
+    """Find a genuine employer/ATS application or careers URL in a listing."""
     urls = re.findall(r"https?://[^\s<>\"']+", text or "")
     cleaned = [u.rstrip(".,);]}") for u in urls]
     blocked_hosts = {
         "wa.me", "whatsapp.com", "www.whatsapp.com",
         "linkedin.com", "www.linkedin.com", "x.com", "twitter.com",
+        "hopinjobs.com", "www.hopinjobs.com",
     }
     candidates = []
     for url in cleaned:
@@ -71,29 +71,27 @@ def extract_application_url(text: str) -> str:
             host = (urlparse(url).hostname or "").lower()
         except Exception:
             continue
-        if not host or host in blocked_hosts or host.endswith(".linkedin.com") or host.endswith(".whatsapp.com"):
+        if not host or host in blocked_hosts or host.endswith(".linkedin.com") or host.endswith(".whatsapp.com") or host.endswith(".hopinjobs.com"):
             continue
         candidates.append(url)
     for url in candidates:
         low = url.lower()
         if any(token in low for token in (
             "apply", "career", "careers", "jobs", "job", "workday",
-            "greenhouse", "lever", "smartrecruiters", "myworkdayjobs"
+            "greenhouse", "lever", "smartrecruiters", "myworkdayjobs",
+            "ashbyhq", "successfactors", "icims", "taleo",
         )):
             return url
     return candidates[0] if candidates else ""
 
 
 def source_job_url(job: dict) -> str:
-    """Return the official page supplied by the job source, not a direct-apply URL."""
-    if job.get("source") == "Jobicy":
-        return str(job.get("url") or "")
+    """Prefer the employer/ATS application URL; never send the user to Hopin when one exists."""
+    application_url = str(job.get("application_url") or "").strip()
+    if application_url:
+        return application_url
     if job.get("source") == "Hopin":
-        return hopin_job_url({
-            "id": str(job.get("source_job_id") or "").replace("hopin-", ""),
-            "title": job.get("title", ""),
-            "company": job.get("company", ""),
-        })
+        return ""
     return str(job.get("url") or "")
 
 
@@ -151,12 +149,15 @@ async def fetch_jobicy(client: httpx.AsyncClient, skills: list[str]):
                 jid = j.get("id")
                 if jid is None:
                     continue
+                description = re.sub(r"<[^>]+>", " ", j.get("jobDescription", ""))
                 source_url = j.get("url", "")
+                application_url = extract_application_url(description)
                 jobs_by_id[f"jobicy-{jid}"] = {
                     "id": f"jobicy-{jid}", "source": "Jobicy", "company": j.get("companyName", ""),
                     "title": j.get("jobTitle", ""), "location": j.get("jobGeo", "Remote"), "work_model": "Remote",
                     "posting_date": j.get("pubDate", ""), "url": source_url, "source_url": source_url,
-                    "description": re.sub(r"<[^>]+>", " ", j.get("jobDescription", "")), "remote": True,
+                    "application_url": application_url,
+                    "description": description, "remote": True,
                     "salary": f"{j.get('salaryMin','')} - {j.get('salaryMax','')} {j.get('salaryCurrency','')}".strip(" -"),
                 }
         return list(jobs_by_id.values())
