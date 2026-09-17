@@ -14,7 +14,7 @@ from docx import Document
 from .matcher import extract_skills, match_job
 
 BASE = Path(__file__).resolve().parent.parent
-APP_VERSION = "2026.09.17.2"
+APP_VERSION = "2026.09.17.3"
 app = FastAPI(title="AI Job Matcher", version=APP_VERSION)
 
 
@@ -108,7 +108,7 @@ def extract_application_url_from_job(job: dict) -> str:
 
 
 def source_job_url(job: dict) -> str:
-    """Use the employer/ATS application URL; never route Hopin listings to Hopin."""
+    """Use employer/ATS application URL only; never route Hopin listings to Hopin."""
     application_url = str(job.get("application_url") or "").strip()
     if application_url:
         return application_url
@@ -198,11 +198,12 @@ async def fetch_hopin(client: httpx.AsyncClient):
                 continue
             description = j.get("description", "")
             application_url = extract_application_url_from_job(j)
-            source_url = hopin_job_url(j)
+            # IMPORTANT: never expose the Hopin page as the clickable job URL.
+            source_url = application_url
             jobs.append({
                 "id": f"hopin-{jid}", "source": "Hopin", "company": j.get("company", ""),
                 "title": j.get("title", ""), "location": j.get("location", ""), "work_model": j.get("work_type", ""),
-                "posting_date": j.get("posted_at", ""), "url": source_url, "source_url": source_url,
+                "posting_date": j.get("posted_at", ""), "url": application_url, "source_url": source_url,
                 "application_url": application_url, "source_job_id": str(jid),
                 "description": description,
                 "remote": "remote" in j.get("work_type", "").lower() or "remote" in j.get("location", "").lower(),
